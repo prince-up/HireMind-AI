@@ -5,6 +5,13 @@ import fitz  # PyMuPDF
 import tempfile
 import os
 import re
+from ..services import rag
+from ..db import SessionLocal, init_db
+from .. import models
+
+init_db()
+import uuid
+
 
 router = APIRouter(prefix="/resume", tags=["resume"])
 
@@ -15,6 +22,7 @@ class ResumeParseResponse(BaseModel):
     education: List[str]
     experience: List[str]
     rawText: str
+    resume_id: Optional[str] = None
 
 
 @router.post("/upload", response_model=ResumeParseResponse)
@@ -54,12 +62,34 @@ async def upload_resume(file: UploadFile = File(...)):
         education = extract_section("Education")
         experience = extract_section("Experience")
 
+        # persist resume to DB
+        db = SessionLocal()
+        resume_uuid = str(uuid.uuid4())
+        resume_row = models.Resume(resume_id=resume_uuid, filename=file.filename, raw_text=text)
+        db.add(resume_row)
+        db.commit()
+        db.refresh(resume_row)
+
+        # store chunks in DB as well
+        chunks = rag.chunk_text(text)
+        for idx, chunk in enumerate(chunks):
+            rc = models.ResumeChunk(resume_id=resume_row.id, chunk_index=idx, text=chunk)
+            db.add(rc)
+        db.commit()
+
+        # index into vector store (async/optional)
+        try:
+            rag.index_resume(resume_uuid, text)
+        except Exception as e:
+            print("RAG indexing failed:", e)
+
         return ResumeParseResponse(
             skills=skills_list,
             projects=projects,
             education=education,
             experience=experience,
             rawText=text,
+            resume_id=resume_uuid,
         )
     finally:
         try:

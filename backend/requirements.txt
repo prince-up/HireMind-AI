@@ -1,0 +1,8 @@
+fastapi
+python-multipart
+uvicorn
+pymupdf
+sentence-transformers
+qdrant-client
+sqlalchemy
+google-generativeai
